@@ -164,18 +164,27 @@ static void sine_float(t_sine *x, t_floatarg f) {
 
 static void *sine_new(t_symbol *s, int argc, t_atom *argv) {
     t_sine *x = (t_sine *)pd_new(sine_class);
+
+    /* Initialize defaults */
     x->x_freq = 0;
     x->x_soft = 0;
     x->x_dir = 1.0f;
     x->x_phase = 0;
-    x->x_rng = 12345;
     x->x_last_sync = 0;
     x->x_dc_state = 0;
-    x->x_filter = 1; 
+    x->x_filter = 1;
     x->x_clock_mode = 0;
     x->x_count = 0;
     x->x_sr = 44100.0f;
 
+    /*
+     * UNIQUE SEED GENERATION:
+     * We use the memory address of 'x' to ensure every
+     * instance of sine~ starts with a unique drift character.
+     */
+    x->x_rng = (uint32_t)((uintptr_t)x);
+
+    /* Parse arguments like -soft, -lfo, or frequency */
     while (argc > 0) {
         if (argv->a_type == A_SYMBOL) {
             t_symbol *sym = atom_getsymbol(argv);
@@ -185,7 +194,7 @@ static void *sine_new(t_symbol *s, int argc, t_atom *argv) {
                 x->x_clock_mode = 1;
             }
             argc--; argv++;
-        } 
+        }
         else if (argv->a_type == A_FLOAT) {
             x->x_freq = atom_getfloat(argv);
             argc--; argv++;
@@ -197,6 +206,7 @@ static void *sine_new(t_symbol *s, int argc, t_atom *argv) {
     inlet_new(&x->x_obj, &x->x_obj.ob_pd, &s_signal, &s_signal);
     inlet_new(&x->x_obj, &x->x_obj.ob_pd, &s_signal, &s_signal);
     outlet_new(&x->x_obj, &s_signal);
+
     return (void *)x;
 }
 
