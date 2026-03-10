@@ -35,3 +35,13 @@ mkdir build
 cd build
 cmake ..
 make
+
+### Credits & Acknowledgements
+- DSP Logic: Polynomial sine approximation and anti-aliasing techniques inspired by the VCV Rack Fundamental library by Andrew Belt.
+
+- Architecture: Modular implementation and signal-handling patterns inspired by the else library by Alexandre Torres Porres.
+
+- Inspiration: The "Multiplex" philosophy is an homage to Samuel R. Delany's Empire Star.
+
+### License
+BSD 3-Clause "New" or "Revised" License.
