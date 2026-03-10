@@ -1,3 +1,19 @@
+/*
+ * MULTIPLEX: sine~
+ * Signal-rate oscillator with multiple operating perspectives.
+ * 
+ * Inlets:
+ *   1: Frequency (Signal/Float)
+ *   2: Sync/Clock (Signal) - Trigger threshold 0.5
+ *   3: Phase Offset (Signal)
+ *   4: Drift Intensity (Signal)
+ *
+ * Perspectives:
+ *   Simplex:  9th-order polynomial approximation for high precision.
+ *   Complex:  Hard/Soft sync and automated frequency clocking.
+ *   Multiplex: Analog-style shaper, DC blocker, and PRNG phase drift.
+ */
+
 #include <m_pd.h>
 #include <math.h>
 #include <stdlib.h>
@@ -7,40 +23,41 @@ static t_class *sine_class;
 
 typedef struct _sine {
     t_object  x_obj;
-    double    x_phase;     
-    t_float   x_freq;      
-    int       x_soft;      
-    t_float   x_dir;       
-    uint32_t  x_rng;       
-    t_float   x_sr_rec;    
-    t_float   x_last_sync; 
-    
-    /* Analog Flavor / LFO states */
-    t_float   x_dc_state;
-    int       x_filter;      /* 1 = ON (Audio), 0 = OFF (LFO/Drone) */
-    
-    /* Clock/Timer states */
-    int       x_clock_mode;  /* 1 = Clock, 0 = Sync */
-    uint32_t  x_count;       
-    t_float   x_sr;          
+    double    x_phase;       /* Current phase position [0..1] */
+    t_float   x_freq;        /* Internal frequency value */
+    int       x_soft;        /* Sync mode: 1 = Soft, 0 = Hard */
+    t_float   x_dir;         /* Direction: 1.0 forward, -1.0 backward */
+    uint32_t  x_rng;         /* PRNG state for phase drift */
+    t_float   x_sr_rec;      /* Reciprocal of sample rate */
+    t_float   x_last_sync;   /* Edge detection for sync inlet */
+    t_float   x_dc_state;    /* One-pole filter state for DC blocker */
+    int       x_filter;      /* DC filter toggle: 1 = ON, 0 = OFF */
+    int       x_clock_mode;  /* Mode toggle: 1 = Clock, 0 = Sync */
+    uint32_t  x_count;       /* Sample counter for clock timing */
+    t_float   x_sr;          /* Current system sample rate */
 } t_sine;
 
-/* 9th-order polynomial sine approximation */
+/* --- DSP HELPERS --- */
+
+/* 9th-order polynomial approximation of sin(2*pi*x) */
 static inline t_sample multiplex_sine_poly(double x) {
     double t = 2.0 * x - 1.0;
     double t2 = t * t;
     return (t_sample)(t * (t2 - 1.0) * (3.141521 + t2 * (-2.024773 + t2 * (0.517492 + t2 * -0.063691))));
 }
 
-/* Analog shaper for 3rd-harmonic warmth */
+/* Analog shaper providing subtle 3rd-harmonic saturation */
 static inline t_sample multiplex_analog_shaper(t_sample x) {
     return x * (1.005f - 0.05f * x * x);
 }
 
+/* Linear Congruential Generator for high-performance pseudo-random noise */
 static inline uint32_t multiplex_rand(uint32_t *state) {
     *state = *state * 196314165 + 907633515;
     return *state;
 }
+
+/* --- PERFORM ROUTINE --- */
 
 static t_int *sine_perform(t_int *w) {
     t_sine *x = (t_sine *)(w[1]);
@@ -59,14 +76,14 @@ static t_int *sine_perform(t_int *w) {
 
     while (n--) {
         t_sample f_sig = *in_f++;
-        t_sample sync_in = *in_s++;
-        t_sample offset  = *in_o++;
-        t_sample d_sig   = *in_d++;
+        t_sample s_sig = *in_s++;
+        t_sample o_sig = *in_o++;
+        t_sample d_sig = *in_d++;
 
         count++; 
 
-        /* Sync / Clock Logic (Threshold 0.5) */
-        if (sync_in >= 0.5f && last_s < 0.5f) {
+        /* Sync / Clock Logic */
+        if (s_sig >= 0.5f && last_s < 0.5f) {
             if (x->x_clock_mode) {
                 if (count > 0) x->x_freq = x->x_sr / (t_float)count;
                 count = 0; 
@@ -76,23 +93,22 @@ static t_int *sine_perform(t_int *w) {
                 else ph = 0;
             }
         }
-        last_s = sync_in;
+        last_s = s_sig;
 
-        /* Frequency Logic */
+        /* Frequency + Drift calculation */
         t_float freq_in = (f_sig != 0) ? f_sig : x->x_freq;
         uint32_t r = multiplex_rand(&x->x_rng);
-        t_float noise = ((float)r * (1.0f / 4294967296.0f) - 0.5f) * d_sig;
+        t_float noise = ((float)r * (1.0f / 4294967296.0f) - 0.5f) * (float)d_sig;
         double step = (double)(freq_in + (freq_in * noise)) * (double)x->x_sr_rec * (double)dir;
 
-        /* Output calculation */
-        double wrapped_ph = ph + (double)offset;
+        /* Output phase accumulation with offset */
+        double wrapped_ph = ph + (double)o_sig;
         wrapped_ph -= floor(wrapped_ph);
         if (wrapped_ph < 0) wrapped_ph += 1.0;
 
-        t_sample sig = multiplex_sine_poly(wrapped_ph);
-        sig = multiplex_analog_shaper(sig);
+        t_sample sig = multiplex_analog_shaper(multiplex_sine_poly(wrapped_ph));
 
-        /* DC Blocker */
+        /* DC Blocker (One-pole highpass) */
         if (x->x_filter) {
             dc += 0.0005f * (sig - dc);
             *out++ = sig - dc;
@@ -119,12 +135,16 @@ static void sine_dsp(t_sine *x, t_signal **sp) {
     dsp_add(sine_perform, 7, x, sp[0]->s_vec, sp[1]->s_vec, sp[2]->s_vec, sp[3]->s_vec, sp[4]->s_vec, sp[0]->s_n);
 }
 
+/* --- MESSAGE HANDLERS --- */
+
 static void sine_soft(t_sine *x, t_floatarg f) {
     x->x_soft = (int)(f != 0);
 }
 
 static void sine_seed(t_sine *x, t_floatarg f) {
     x->x_rng = (uint32_t)f;
+    x->x_phase = 0; 
+    x->x_dc_state = 0;
 }
 
 static void sine_filter(t_sine *x, t_floatarg f) {
@@ -139,6 +159,8 @@ static void sine_clock(t_sine *x, t_floatarg f) {
 static void sine_float(t_sine *x, t_floatarg f) {
     x->x_freq = f;
 }
+
+/* --- CONSTRUCTOR / DESTRUCTOR --- */
 
 static void *sine_new(t_symbol *s, int argc, t_atom *argv) {
     t_sine *x = (t_sine *)pd_new(sine_class);
@@ -158,7 +180,6 @@ static void *sine_new(t_symbol *s, int argc, t_atom *argv) {
         if (argv->a_type == A_SYMBOL) {
             t_symbol *sym = atom_getsymbol(argv);
             if (sym == gensym("-soft")) x->x_soft = 1;
-            /* -lfo flag now switches both Filter OFF and Clock ON */
             if (sym == gensym("-lfo")) {
                 x->x_filter = 0;
                 x->x_clock_mode = 1;
