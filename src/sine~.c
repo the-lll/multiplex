@@ -1,17 +1,16 @@
 /*
  * MULTIPLEX: sine~
  * Signal-rate oscillator with multiple operating perspectives.
- * 
- * Inlets:
- *   1: Frequency (Signal/Float)
- *   2: Sync/Clock (Signal) - Trigger threshold 0.5
- *   3: Phase Offset (Signal)
- *   4: Drift Intensity (Signal)
+ * * Inlets:
+ * 1: Frequency (Signal/Float)
+ * 2: Sync/Clock (Signal) - Trigger threshold 0.5
+ * 3: Phase Offset (Signal)
+ * 4: Drift Intensity (Signal)
  *
  * Perspectives:
- *   Simplex:  9th-order polynomial approximation for high precision.
- *   Complex:  Hard/Soft sync and automated frequency clocking.
- *   Multiplex: Analog-style shaper, DC blocker, and PRNG phase drift.
+ * Simplex:  9th-order polynomial approximation for high precision.
+ * Complex:  Hard/Soft sync and automated frequency clocking.
+ * Multiplex: Analog-style shaper, DC blocker, and PRNG phase drift.
  */
 
 #include <m_pd.h>
@@ -143,8 +142,19 @@ static void sine_soft(t_sine *x, t_floatarg f) {
 
 static void sine_seed(t_sine *x, t_floatarg f) {
     x->x_rng = (uint32_t)f;
-    x->x_phase = 0; 
-    x->x_dc_state = 0;
+
+    /* Warm up the PRNG */
+    for(int i = 0; i < 8; i++) {
+        x->x_rng = x->x_rng * 196314165 + 907633515;
+    }
+
+    x->x_phase = 0;      /* Reset wave */
+    x->x_dc_state = 0;   /* Reset filter */
+    x->x_last_sync = 0;  /* Reset sync edge detector */
+
+    /* CRITICAL FOR SOFT SYNC: */
+    x->x_dir = 1.0f;     /* Force wave to move forward */
+
 }
 
 static void sine_filter(t_sine *x, t_floatarg f) {
