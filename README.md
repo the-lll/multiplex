@@ -35,6 +35,7 @@ mkdir build
 cd build
 cmake ..
 make
+```
 
 ### Credits & Acknowledgements
 - DSP Logic: Polynomial sine approximation and anti-aliasing techniques inspired by the VCV Rack Fundamental library by Andrew Belt.
